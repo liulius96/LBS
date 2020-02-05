@@ -727,15 +727,6 @@ rbind(price_summary, prediction_summary)
 
 
 ```
-
-
-# Details
-
-- Who did you collaborate with: Stackoverflow and Google
-- Approximately how much time did you spend on this assignment: 9 hr
-- What, if anything, gave you the most trouble: Outliers in histograms and density plots
-
-
 # Acknowledgements
 
 - The data from this lab is from [insideairbnb.com](insideairbnb.com)
