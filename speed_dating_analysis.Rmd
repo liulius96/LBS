@@ -1,6 +1,6 @@
 ---
-title: "Group 40 Business Analytics Group Project"
-author: "Tony Liu (3387917), Stefano Melchiori (3172154), Shahmeer Naeem (3254658), Thao Nguyen (3310828), Garance Pourrinet (2583430), Sijue Zhang (3291234)"
+title: "Speed Dating Analysis"
+author: "Tony Liu"
 date: "`r Sys.Date()`"
 output:
   html_document:
