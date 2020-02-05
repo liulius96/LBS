@@ -1,0 +1,1627 @@
+---
+title: "Group 40 Business Analytics Group Project"
+author: "Tony Liu (3387917), Stefano Melchiori (3172154), Shahmeer Naeem (3254658), Thao Nguyen (3310828), Garance Pourrinet (2583430), Sijue Zhang (3291234)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    highlight: zenburn
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    code_folding: show
+---
+
+
+```{r setup, include=FALSE}
+options(knitr.table.format = "html") 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, 
+  comment = NA, dpi = 300)
+```
+
+
+# Initialisation
+
+```{r load libraries, echo=FALSE}
+library(tidyverse) # the usual stuff: dplyr, readr, and other goodies
+library(lubridate) # to handle dates
+library(GGally) # for correlation-scatter plot matrix
+library(ggfortify) # to produce residual diagnostic plots
+library(rsample) # to split dataframe in training- & testing sets
+library(janitor) # clean_names()
+library(broom) # use broom:augment() to get tidy table with regression output, residuals, etc
+library(huxtable) # to get summary table of all models produced
+library(kableExtra) # for formatting tables
+library(moderndive) # for getting regression tables
+library(skimr) # for skim
+library(mosaic)
+library(fmsb) # for the radar chart
+```
+
+
+
+```{r load data}
+# load data
+data <- read_csv('Speed Dating Data.csv')
+
+# we save the data as separate people worked on the coding side with differen variable names
+SpeedDatingData <- data
+
+
+# select the relevant rows for our LBS survey
+data2 <- data %>%
+  select(age,
+         age_o,
+         gender,
+         from,
+         imprace,
+         imprelig,
+         goal,
+         date,
+         go_out,
+         career,
+         int_corr,
+         career,
+         career_c,
+         sports:yoga,
+         attr1_1:shar1_1,
+         attr4_1:shar4_1,
+         attr2_1:shar2_1,
+         attr3_1:amb3_1,
+         attr5_1:amb5_1)
+
+```
+
+
+```{r EDA, eval=FALSE}
+glimpse(data)
+skim(data)
+
+```
+
+
+# EDA
+
+
+## EDA - Original Dataset
+Thao and Sijue kindly ran through some visualisations and cleaning of the speed-dating datset
+
+
+### Some Prep work
+
+```{r EDA - Thao 1}
+
+SpeedDatingData.AvgAttributes = SpeedDatingData %>% filter(!is.na(attr1_1)) %>%
+  filter(!is.na(sinc1_1)) %>%
+  filter(!is.na(intel1_1)) %>%
+  filter(!is.na(fun1_1)) %>%
+  filter(!is.na(amb1_1)) %>%
+  filter(!is.na(shar1_1)) %>%
+  group_by(gender) %>% 
+  summarise(AvgAttractive1 = round(mean(attr1_1),0),
+            AvgSincere1 = round(mean(sinc1_1),0),
+            AvgIntel1 = round(mean(intel1_1),0),
+            AvgFun1 = round(mean(fun1_1),0),
+            AvgAmb1 = round(mean(amb1_1),0),
+            AvgShar1 = round(mean(shar1_1),0)
+            ) 
+
+DataAnalysisSpeedDating <- function(SpeedDatingData.AvgAttributes)
+{
+  SpeedDatingData.AttractiveOnly = SpeedDatingData.AvgAttributes %>%
+    select(gender,AvgAttractive1) %>%
+    mutate(score = AvgAttractive1) %>%
+    mutate(TypeOfAttribute = "Attractive") %>%
+    select(gender,score,TypeOfAttribute)
+  
+  SpeedDatingData.SincereOnly = SpeedDatingData.AvgAttributes %>%
+    select(gender,AvgSincere1) %>%
+    mutate(score = AvgSincere1) %>%
+    mutate(TypeOfAttribute = "Sincere")%>%
+    select(gender,score,TypeOfAttribute)
+  
+  SpeedDatingData.FunOnly = SpeedDatingData.AvgAttributes %>%
+    select(gender,AvgFun1) %>%
+    mutate(score = AvgFun1) %>%
+    mutate(TypeOfAttribute = "Fun") %>%
+    select(gender,score,TypeOfAttribute)
+  
+  
+  SpeedDatingData.AmbOnly = SpeedDatingData.AvgAttributes %>%
+    select(gender,AvgAmb1) %>%
+    mutate(score = AvgAmb1) %>%
+    mutate(TypeOfAttribute = "Ambiton") %>%
+    select(gender,score,TypeOfAttribute)
+  
+  SpeedDatingData.SharOnly = SpeedDatingData.AvgAttributes %>%
+    select(gender,AvgShar1) %>%
+    mutate(score = AvgShar1) %>%
+    mutate(TypeOfAttribute = "SharedInterests")%>%
+    select(gender,score,TypeOfAttribute)
+  
+    SpeedDatingData.IntelOnly = SpeedDatingData.AvgAttributes %>%
+    select(gender,AvgIntel1) %>%
+    mutate(score = AvgIntel1) %>%
+    mutate(TypeOfAttribute = "Intelligence")%>%
+    select(gender,score,TypeOfAttribute)
+  
+  SpeedDatingData.Summary1 = rbind(SpeedDatingData.AttractiveOnly,
+                                   SpeedDatingData.SincereOnly,
+                                   SpeedDatingData.FunOnly,
+                                   SpeedDatingData.AmbOnly,
+                                   SpeedDatingData.SharOnly,
+                                   SpeedDatingData.IntelOnly)
+  
+  SpeedDatingData.Summary1$TypeOfAttribute = as.factor(SpeedDatingData.Summary1$TypeOfAttribute)
+  
+
+  return(SpeedDatingData.Summary1)
+  
+}
+
+```
+
+
+### What people look for in partners before the date
+
+```{r EDA - Thao 2}
+library(gridExtra)
+#Before the date
+SpeedDatingData.Summary1 = DataAnalysisSpeedDating(SpeedDatingData.AvgAttributes)
+
+SpeedDatingData.Summary1.Male = SpeedDatingData.Summary1 %>% filter(gender == 1)
+
+before1_men<- ggplot(SpeedDatingData.Summary1.Male , aes(x = reorder(TypeOfAttribute, score), 
+                                           y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "cadetblue3") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Males') +
+  coord_flip() + 
+  theme_bw()
+SpeedDatingData.Summary1.Female = SpeedDatingData.Summary1 %>% filter(gender == 0)
+
+before1_women <-ggplot(SpeedDatingData.Summary1.Female , aes(x = reorder(TypeOfAttribute, score), 
+                                             y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "hotpink1") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Female') +
+  coord_flip() + 
+  theme_bw()
+
+# plot side by side
+grid.arrange(before1_men,before1_women, ncol=2)
+
+```
+
+
+Attractiveness is the most important to men but only of medium importance for women. 
+Intelligence is very crucial for both genders, first for female and second for male.
+Shared interest and Ambition are two least popular attributes that participants are looking from partners.
+
+
+### What people look for in partners after the date
+
+```{r EDA - Thao 3}
+
+#After the date
+SpeedDatingData.AvgAttributes5 = SpeedDatingData %>% filter(!is.na(attr1_2)) %>%
+  filter(!is.na(sinc1_2)) %>%
+  filter(!is.na(intel1_2)) %>%
+  filter(!is.na(fun1_2)) %>%
+  filter(!is.na(amb1_2)) %>%
+  filter(!is.na(shar1_2)) %>%
+  group_by(gender) %>% 
+  summarise(AvgAttractive1 = round(mean(attr1_2),0),
+            AvgSincere1 = round(mean(sinc1_2),0),
+            AvgIntel1 = round(mean(intel1_2),0),
+            AvgFun1 = round(mean(fun1_2),0),
+            AvgAmb1 = round(mean(amb1_2),0),
+            AvgShar1 = round(mean(shar1_2),0)
+  ) 
+
+SpeedDatingData.Summary1 = DataAnalysisSpeedDating(SpeedDatingData.AvgAttributes5)
+
+SpeedDatingData.Summary1.Male = SpeedDatingData.Summary1 %>% filter(gender == 1)
+
+before2_men <- ggplot(SpeedDatingData.Summary1.Male , aes(x = reorder(TypeOfAttribute, score), 
+                                           y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "cadetblue3") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Males') +
+  coord_flip() + 
+  theme_bw()
+
+SpeedDatingData.Summary1.Female = SpeedDatingData.Summary1 %>% filter(gender == 0)
+
+before2_women <- ggplot(SpeedDatingData.Summary1.Female , aes(x = reorder(TypeOfAttribute, score), 
+                                             y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "hotpink1") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Female') +
+  coord_flip() + 
+  theme_bw()
+
+# plot side by side
+grid.arrange(before2_men,before2_women, ncol=2)
+
+```
+
+Male:
+Attractiveness is the only top 3 attribute showing increase, reinforcing the dominant position, leaving the closest attribute 12 points apart. Fun outpassed Intelligence to become the second most important attribute
+Female:
+Attractiveness rose by 4 points to raise from third to first position. Intelligence and Sincere fell to the following positions.
+
+
+### what people look for in a partner 3-4 weeks after the initial date
+```{r EDA - Thao 4}
+
+#3-4 weeks later
+SpeedDatingData.AvgAttributes7 = SpeedDatingData %>% filter(!is.na(attr1_3)) %>%
+  filter(!is.na(sinc1_3)) %>%
+  filter(!is.na(intel1_3)) %>%
+  filter(!is.na(fun1_3)) %>%
+  filter(!is.na(amb1_3)) %>%
+  filter(!is.na(shar1_3)) %>%
+  group_by(gender) %>% 
+  summarise(AvgAttractive1 = round(mean(attr1_3),0),
+            AvgSincere1 = round(mean(sinc1_3),0),
+            AvgIntel1 = round(mean(intel1_3),0),
+            AvgFun1 = round(mean(fun1_3),0),
+            AvgAmb1 = round(mean(amb1_3),0),
+            AvgShar1 = round(mean(shar1_3),0)
+  ) 
+
+SpeedDatingData.Summary1 = DataAnalysisSpeedDating(SpeedDatingData.AvgAttributes7)
+
+SpeedDatingData.Summary1.Male = SpeedDatingData.Summary1 %>% filter(gender == 1)
+
+before3_men <- ggplot(SpeedDatingData.Summary1.Male , aes(x = reorder(TypeOfAttribute, score), 
+                                           y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "cadetblue3") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Males') +
+  coord_flip() + 
+  theme_bw()
+
+SpeedDatingData.Summary1.Female = SpeedDatingData.Summary1 %>% filter(gender == 0)
+
+before3_women <- ggplot(SpeedDatingData.Summary1.Female , aes(x = reorder(TypeOfAttribute, score), 
+                                             y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "hotpink1") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Female') +
+  coord_flip() + 
+  theme_bw()
+
+# plot side by side
+grid.arrange(before3_men,before3_women, ncol=2)
+
+```
+
+Male: Intelligence outpassed Fun to stand in the second position. Perhaps, after 4-6 weeks, they talked to each other more and figured out that Intelligence is more important
+
+Female: the gap between attractive and intelligence is now smaller (3 to 1 point only)
+
+### What do you think others look for in a date (before the date)
+
+```{r EDA - Thao graph 1}
+#Before the date
+SpeedDatingData.AvgAttributes9 = SpeedDatingData %>% filter(!is.na(attr2_1)) %>%
+  filter(!is.na(sinc2_1)) %>%
+  filter(!is.na(intel2_1)) %>%
+  filter(!is.na(fun2_1)) %>%
+  filter(!is.na(amb2_1)) %>%
+  filter(!is.na(shar2_1)) %>%
+  group_by(gender) %>% 
+  summarise(AvgAttractive1 = round(mean(attr2_1),0),
+            AvgSincere1 = round(mean(sinc2_1),0),
+            AvgIntel1 = round(mean(intel2_1),0),
+            AvgFun1 = round(mean(fun2_1),0),
+            AvgAmb1 = round(mean(amb2_1),0),
+            AvgShar1 = round(mean(shar2_1),0)
+  ) 
+
+SpeedDatingData.Summary1 = DataAnalysisSpeedDating(SpeedDatingData.AvgAttributes7)
+
+SpeedDatingData.Summary1.Male = SpeedDatingData.Summary1 %>% filter(gender == 1)
+
+before4_men <- ggplot(SpeedDatingData.Summary1.Male , aes(x = reorder(TypeOfAttribute, score), 
+                                           y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "cadetblue3") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Males') +
+  coord_flip() + 
+  theme_bw()
+
+SpeedDatingData.Summary1.Female = SpeedDatingData.Summary1 %>% filter(gender == 0)
+
+before4_women <- ggplot(SpeedDatingData.Summary1.Female , aes(x = reorder(TypeOfAttribute, score), 
+                                             y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "hotpink1") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Female') +
+  coord_flip() + 
+  theme_bw()
+
+# plot side by side
+grid.arrange(before4_men,before4_women, ncol=2)
+
+```
+
+### What do you think others look for in a date (after the date)
+
+```{r EDA - Thao graphs2}
+
+#After the date
+SpeedDatingData.AvgAttributes11 = SpeedDatingData %>% filter(!is.na(attr2_2)) %>%
+  filter(!is.na(sinc2_2)) %>%
+  filter(!is.na(intel2_2)) %>%
+  filter(!is.na(fun2_2)) %>%
+  filter(!is.na(amb2_2)) %>%
+  filter(!is.na(shar2_2)) %>%
+  group_by(gender) %>% 
+  summarise(AvgAttractive1 = round(mean(attr2_2),0),
+            AvgSincere1 = round(mean(sinc2_2),0),
+            AvgIntel1 = round(mean(intel2_2),0),
+            AvgFun1 = round(mean(fun2_2),0),
+            AvgAmb1 = round(mean(amb2_2),0),
+            AvgShar1 = round(mean(shar2_2),0)
+  ) 
+
+SpeedDatingData.Summary1 = DataAnalysisSpeedDating(SpeedDatingData.AvgAttributes7)
+
+SpeedDatingData.Summary1.Male = SpeedDatingData.Summary1 %>% filter(gender == 1)
+
+before5_men <- ggplot(SpeedDatingData.Summary1.Male , aes(x = reorder(TypeOfAttribute, score), 
+                                           y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "cadetblue3") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Males') +
+  coord_flip() + 
+  theme_bw()
+
+SpeedDatingData.Summary1.Female = SpeedDatingData.Summary1 %>% filter(gender == 0)
+
+before5_women <- ggplot(SpeedDatingData.Summary1.Female , aes(x = reorder(TypeOfAttribute, score), 
+                                             y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "hotpink1") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Female') +
+  coord_flip() + 
+  theme_bw()
+
+# plot side by side
+grid.arrange(before5_men,before5_women, ncol=2)
+
+
+```
+
+
+### What do you think others look for in a date (3-4 weeks after initial date)
+
+```{r EDA - Thao graphs 3}
+
+#3-4 weeks later
+SpeedDatingData.AvgAttributes11 = SpeedDatingData %>% filter(!is.na(attr2_2)) %>%
+  filter(!is.na(sinc2_3)) %>%
+  filter(!is.na(intel2_3)) %>%
+  filter(!is.na(fun2_3)) %>%
+  filter(!is.na(amb2_3)) %>%
+  filter(!is.na(shar2_3)) %>%
+  group_by(gender) %>% 
+  summarise(AvgAttractive1 = round(mean(attr2_3),0),
+            AvgSincere1 = round(mean(sinc2_3),0),
+            AvgIntel1 = round(mean(intel2_3),0),
+            AvgFun1 = round(mean(fun2_3),0),
+            AvgAmb1 = round(mean(amb2_3),0),
+            AvgShar1 = round(mean(shar2_3),0)
+  ) 
+
+SpeedDatingData.Summary1 = DataAnalysisSpeedDating(SpeedDatingData.AvgAttributes7)
+
+SpeedDatingData.Summary1.Male = SpeedDatingData.Summary1 %>% filter(gender == 1)
+
+before6_men <- ggplot(SpeedDatingData.Summary1.Male , aes(x = reorder(TypeOfAttribute, score), 
+                                           y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "cadetblue3") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Males') +
+  coord_flip() + 
+  theme_bw()
+
+SpeedDatingData.Summary1.Female = SpeedDatingData.Summary1 %>% filter(gender == 0)
+
+before6_women <- ggplot(SpeedDatingData.Summary1.Female , aes(x = reorder(TypeOfAttribute, score), 
+                                             y = score)) +
+  geom_bar(stat='identity',colour="white", fill = "hotpink1") +
+  geom_text(aes(x = TypeOfAttribute, y = 1, label = paste0("(",score,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'white',
+            fontface = 'bold') +
+  labs(x = 'TypeOfAttribute', y = 'Score', title = 'TypeOfAttribute and Score - Female') +
+  coord_flip() + 
+  theme_bw()
+
+# plot side by side
+grid.arrange(before6_men,before6_women, ncol=2)
+
+```
+
+
+
+### Checking NA and correlations of variables with 'match'
+
+```{r EDA 2}
+library(reshape)
+# View the number of NA for the LBS survey DF
+colSums(is.na(data2))
+
+# too many na's in attr4-shar4 and attr5-amb5, let's drop columns with >30% na
+data3 <- data2[, -which(colMeans(is.na(data2)) > 0.3)]
+
+# drop the character columns for correlation
+data_cor <- data %>% 
+  select(-career, -field, -from)
+
+# there are lots of columns with over half na, let's drop the columns with more than 30% na
+data_cor <- data_cor[, -which(colMeans(is.na(data_cor)) > 0.3)]
+
+# Find the correlations and round to 2 dp
+cor_mat <- round(cor(data_cor, use='complete.obs', method='spearman'),2)
+head(cor_mat)
+
+# prepare the correlation matrix
+melted_cor_mat <- melt(cor_mat)
+
+# filter for relevant values because there are too many
+melted_match <- melted_cor_mat %>% 
+  filter(X1 == 'match') %>% 
+  filter(value >= 0.1 | value <= -0.1) # only select values with correlation
+
+# plot
+ggplot(data = melted_match, aes(x=X1, y=X2, fill=value)) + 
+  geom_tile()+
+  scale_fill_gradient2(low='blue', high='red',mid='white') +
+  labs(title = 'Correlation Heatmap for Match',
+       x = 'Variable - Match',
+       y = 'Variables with a correlation > 0.1')
+
+
+
+```
+
+The heatmap with all the high correlations (above 0.3) are columns which participants complete after a speed date. This is an issue for when we try to model and predict for LBS students, as we only have the pre-date self-evaluation data available.
+
+## EDA cont. and Data Visualisations (Speed Dating)
+
+Let's try to show the data in a better format - we're going to build a radar chart
+
+```{r EDA 3 and Data Visualisation}
+#First, data is checked for consistency since some of the participants will place the ranks differently than others (on a 1-10 scale compared to using a distribution of 100 points). 
+
+#take related attributes with iid and gender into new data frame
+data_radar<-
+data %>%
+  group_by(gender) %>%
+  select(iid, gender,
+         attr1_1, 
+         sinc1_1, 
+         intel1_1,
+         fun1_1,
+         amb1_1, 
+         shar1_1) %>% 
+  unique()
+
+#Next, we would like to turn all NA into 0, but before this, we check if any entries in iid or gender is NA to prevent mislabels
+sum(is.na(data_radar$iid))
+sum(is.na(data_radar$gender))
+
+#Apply command to change all NA to 0
+data_radar[is.na(data_radar)] <- 0
+
+#Add column to check if total of attributions add up to 100
+
+data_radar$total <- rowSums(data_radar[,c("attr1_1",
+                                          "sinc1_1", 
+                                          "intel1_1", 
+                                          "fun1_1", 
+                                          "amb1_1",
+                                          "shar1_1")])
+
+# table(data_radar$total)
+
+#A total of 0 means all entries are missing and row is dropped
+data_radar<-
+data_radar %>% 
+  filter(!total == "0")
+
+#As there are entry errors in the data, all points are redistributed and curved to fit 100 total points
+data_radar$attr1_1 <- round(data_radar$attr1_1/data_radar$total*100, digits = 2)
+data_radar$sinc1_1 <- round(data_radar$sinc1_1/data_radar$total*100, digits = 2)
+data_radar$intel1_1 <- round(data_radar$intel1_1/data_radar$total*100, digits = 2)
+data_radar$fun1_1 <- round(data_radar$fun1_1/data_radar$total*100, digits = 2)
+data_radar$amb1_1 <- round(data_radar$amb1_1/data_radar$total*100, digits = 2)
+data_radar$shar1_1 <- round(data_radar$shar1_1/data_radar$total*100, digits = 2)
+
+data_radar$total <- rowSums(data_radar[,c("attr1_1",
+                                          "sinc1_1",
+                                          "intel1_1", 
+                                          "fun1_1", 
+                                          "amb1_1", 
+                                          "shar1_1")])
+
+data_radar$total <- round(data_radar$total, digits = 0)
+table(data_radar$total)
+
+
+# visualise data in a radar chart 
+
+
+test1 <-
+data_radar %>%
+  group_by(gender) %>%
+  summarise(Attractive = mean(attr1_1), 
+            Sincere = mean(sinc1_1), 
+            Intelligent = mean(intel1_1), 
+            Fun = mean(fun1_1), 
+            Ambitious = mean(amb1_1), 
+            Interest = mean(shar1_1))
+
+test1forplot <-
+test1 %>% 
+  select(-gender)
+ 
+maxmin <- data.frame(
+ Attractive = c(36, 0),
+ Sincere = c(36, 0),
+ Intelligent = c(36, 0),
+ Fun = c(36, 0),
+ Ambitious = c(36, 0),
+ Interest = c(36, 0))
+
+test11 <- rbind(maxmin, test1forplot)
+
+test11male <- test11[c(1,2,4),]
+test11female <- test11[c(1,2,3),]
+
+radarchart(test11,
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("hotpink1", 0.5), adjustcolor("cadetblue2", 0.5)),
+           pfcol = c(adjustcolor("hotpink1", 0.5), adjustcolor("cadetblue2", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft", 
+       c("Male", "Female"),
+       fill = c(adjustcolor("cadetblue2", 0.5), adjustcolor("hotpink1", 0.5)))
+
+```
+
+
+# London Business School EDA
+
+## Load the Data and clean the data
+
+```{r EDA LBS data}
+# load LBS data
+LBS_data <- read_csv('Finding your soulmate no names.csv')
+
+# change the names of LBS data so it is consistent with our previous dataset
+# Pull the column names from data3
+col_names <- colnames(data3)
+col_names
+
+# compare to the current names of the LBS dataset
+colnames(LBS_data)
+
+# create a new vector
+new_col_names <- c('iid',
+                   'age',
+                   'gender',
+                   'orientation',
+                   'from',
+                   'imprace',
+                   'goal',
+                   'date',
+                   'go_out',
+                   'career')
+
+# append hobbies and attr1_1:shar1_1 (important attributes in date partner)
+new_col_names <- append(new_col_names,col_names[13:35])
+
+# append attr4_1:shar4_1 (what you think fellow men/women find important)
+new_col_names <- append(new_col_names, c('attr4_1',
+                                         'sinc4_1',
+                                         'intel4_1',
+                                         'fun4_1',
+                                         'amb4_1',
+                                         'shar4_1'))
+
+# append attr2_1:shar2_1 (what do you think the opposite sex find important)
+new_col_names <- append(new_col_names, c('attr2_1',
+                                         'sinc2_1',
+                                         'intel2_1',
+                                         'fun2_1',
+                                         'amb2_1',
+                                         'shar2_1'))
+
+# append attr3_1:amb3_1 (how do you think you measure up)
+new_col_names <- append(new_col_names, c('attr3_1',
+                                         'sinc3_1',
+                                         'intel3_1',
+                                         'fun3_1',
+                                         'amb3_1'))
+
+# append how others perceive you
+new_col_names <- append(new_col_names, c('attr5_1',
+                                         'sinc5_1',
+                                         'intel5_1',
+                                         'fun5_1',
+                                         'amb5_1'))
+
+# append share code y/n
+new_col_names <- append(new_col_names, 'share_code')
+
+
+# Change the columns names of LBS_data
+colnames(LBS_data) <- new_col_names
+
+# Clean the from column
+LBS_data <- LBS_data %>% 
+  mutate(from = case_when(
+    from %in% c('China',
+                'China/Finland',
+                "China/Portugal depending on what you mean") ~ 'China',
+    from %in% c('Italia',
+                'Italy') ~ 'Italy',
+    from == 'France / Switzerland' ~ 'France',
+    from == 'Peru/Ukraine' ~ 'Peru',
+    from %in% c('United Kingdom',
+                'UK') ~ 'UK',
+    TRUE ~ from
+    
+  ))
+
+# mutate for general european/asian comparison
+LBS_data <- LBS_data %>% 
+  mutate(from_cont = case_when(
+    from %in% c('China',
+                'Vietnam',
+                'India',
+                'Singapore',
+                'Macau',
+                'Pakistan',
+                'Malaysia') ~ 'Asia',
+    from %in% c('Italy',
+                'France',
+                'Germany',
+                'Sweden',
+                'Switzerland',
+                'UK',
+                'Russia',
+                'Poland',
+                'Slovakia') ~ 'Europe',
+    # from %in% c('USA',
+    #             'Canada') ~ 'North America',
+    # from %in% c('Peru',
+    #             'Argentina') ~ 'South America', 
+    TRUE ~ 'Other'
+  ))
+
+
+# Rechange the attributes rating so the results are more noticeable for radar plots
+# gather
+tidy <- LBS_data %>% 
+  gather(key='attribute',
+         value = 'rating',
+         attr1_1:shar2_1)
+
+# mutate
+tidy <- tidy %>% 
+  mutate(rating = case_when(
+      rating == 1 ~ 12,
+      rating == 2 ~ 6,
+      rating == 3 ~ 2,
+      rating == 4 ~ 1,
+      rating == 5 ~ 0,
+      rating == 6 ~ 0
+    ))
+
+# spread
+LBS_clean <- tidy %>% 
+  spread(key='attribute',
+         value ='rating')
+
+```
+
+The reason we mutated all the scored was because the format of the online survey (ranking from 1 to 6) meant that the small fluctuations in mean ratings were smoothed out by the data preparation method for the radar charts. The above method artificially spikes the data so the fluctuations are more noticeable. This needs to be a point of care for future analysis.
+
+
+## General EDA
+
+```{r EDA graphs for LBS data}
+# See career choices split by gender
+careers <- LBS_clean %>%
+     group_by(career, gender) %>%
+     count(career) %>%
+     arrange(desc(career))
+
+# plot
+ggplot(careers, aes(x = reorder(career, n),
+                    y = n,
+                    fill = factor(gender))) +
+  geom_bar(stat='identity', position='dodge') +
+  scale_fill_discrete(name='Gender') +
+  labs(title = 'Careers Split by Gender',
+       x = 'Career',
+       y = 'Number of People') +
+  coord_flip()
+
+
+# see interests split by gender
+interest <- LBS_clean %>% 
+  gather(key = 'intr', 
+         value='score',
+         sports:yoga)
+
+interest_summary <- interest %>% 
+  select(intr, score, gender) %>%
+  group_by(gender, intr) %>% 
+  summarise(avg = mean(score))
+
+# plot
+ggplot(interest_summary, aes(x = reorder(intr,avg), y = avg, fill = factor(gender))) +
+  geom_bar(stat='identity') +
+  scale_fill_discrete(name='Gender') +
+  labs(title = 'Interest Split by Gender',
+       x = 'Interest',
+       y = 'Mean Score') +
+  coord_flip()
+
+
+# see how important dating someone from the same background is by country
+
+
+  
+
+```
+
+
+## Radar Charts
+
+### What people look for in partners split by gender
+
+```{r LBS Radar Chart by Gender}
+
+# Curve the attributes of this set of attributes
+LBS_clean$total <- rowSums(LBS_clean[,c("attr1_1",
+                                      "sinc1_1",
+                                      "intel1_1",
+                                      "fun1_1",
+                                      "amb1_1",
+                                      "shar1_1")])
+
+
+# the points are redistributed and curved to fit 100 total points
+LBS_clean$attr1_1 <- round(LBS_clean$attr1_1/LBS_clean$total*100, digits = 2)
+LBS_clean$sinc1_1 <- round(LBS_clean$sinc1_1/LBS_clean$total*100, digits = 2)
+LBS_clean$intel1_1 <- round(LBS_clean$intel1_1/LBS_clean$total*100, digits = 2)
+LBS_clean$fun1_1 <- round(LBS_clean$fun1_1/LBS_clean$total*100, digits = 2)
+LBS_clean$amb1_1 <- round(LBS_clean$amb1_1/LBS_clean$total*100, digits = 2)
+LBS_clean$shar1_1 <- round(LBS_clean$shar1_1/LBS_clean$total*100, digits = 2)
+
+# create a smaller dataframe, grouped by gender for the radar chart
+test2 <-LBS_clean %>%
+  group_by(gender) %>%
+  summarise(Attractive = mean(attr1_1), 
+            Sincere = mean(sinc1_1),
+            Intelligent = mean(intel1_1), 
+            Fun = mean(fun1_1),
+            Ambitious = mean(amb1_1),
+            Interest = mean(shar1_1))
+
+# modify for plotting
+test2forplot <-
+test2 %>% 
+  select(-gender)
+ 
+# create the boundaries for the radar chart
+maxmin <- data.frame(
+ Attractive = c(36, 0),
+ Sincere = c(36, 0),
+ Intelligent = c(36, 0),
+ Fun = c(36, 0),
+ Ambitious = c(36, 0),
+ Interest = c(36, 0))
+
+# add it to the plot dataframe
+test21 <- rbind(maxmin, test2forplot)
+
+# separate the dataframe into two separate ones for plotting
+test21male <- test21[c(1,2,4),]
+test21female <- test21[c(1,2,3),]
+
+# plot the radar chart
+radarchart(test21,
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("hotpink1", 0.5), adjustcolor("cadetblue2", 0.5)),
+           pfcol = c(adjustcolor("hotpink1", 0.5), adjustcolor("cadetblue2", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft", 
+       c("Male", "Female"),
+       fill = c(adjustcolor("cadetblue2", 0.5), adjustcolor("hotpink1", 0.5)))
+
+
+```
+
+
+
+### What people look for in partners split by country
+
+```{r EDA split radar graph by country}
+
+# create a smaller dataframe, grouped by gender for the radar chart
+test3 <-LBS_clean %>%
+  group_by(from) %>%
+  summarise(Attractive = mean(attr1_1),
+            Sincere = mean(sinc1_1),
+            Intelligent = mean(intel1_1),
+            Fun = mean(fun1_1), 
+            Ambitious = mean(amb1_1),
+            Interest = mean(shar1_1))
+
+# Find out which countries had the most responses
+LBS_clean %>%
+  group_by(from) %>%
+  count() %>%
+  arrange(desc(n))
+
+
+# modify for plotting and select the countries with most responses
+test3forplot <-
+test3 %>% filter(from %in% c('Italy',
+                 'France',
+                 'China',
+                 'India')) %>% 
+  select(-from)
+
+
+# add it to the plot dataframe
+test_country <- rbind(maxmin, test3forplot)
+
+# separate the dataframe into two separate ones for plotting
+test_china <- test_country[c(1,2,3),]
+test_france <- test_country[c(1,2,4),]
+test_india <- test_country[c(1,2,5),]
+test_italy <- test_country[c(1,2,6),]
+
+# plot the radar charts by country
+
+# China
+radarchart(test_china,
+           pty = 32,
+           axistype = 0,
+           pcol = adjustcolor("#e34a33", 0.5),
+           pfcol = adjustcolor("#e34a33", 0.5),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft", 
+       "China",
+       fill = adjustcolor("#e34a33", 0.5))
+
+
+# India
+radarchart(test_india,
+           pty = 32,
+           axistype = 0,
+           pcol = adjustcolor("#feb24c", 0.5),
+           pfcol = adjustcolor("#feb24c", 0.5),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       "India",
+       fill = adjustcolor("#feb24c", 0.5))
+
+# France
+radarchart(test_france,
+           pty = 32,
+           axistype = 0,
+           pcol = adjustcolor("#3182bd", 0.5),
+           pfcol = adjustcolor("#3182bd", 0.5),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       "France",
+       fill = adjustcolor("#3182bd", 0.5))
+
+# Italy
+radarchart(test_italy,
+           pty = 32,
+           axistype = 0,
+           pcol = adjustcolor("#31a354", 0.5),
+           pfcol = adjustcolor("#31a354", 0.5),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       "Italy",
+       fill = adjustcolor("#31a354", 0.5))
+
+
+# France and Italy overlaid
+radarchart(test_country[c(1,2,4,6),],
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("#3182bd", 0.5),
+                adjustcolor("#31a354", 0.5)),
+           pfcol = c(adjustcolor("#3182bd", 0.5),
+                adjustcolor("#31a354", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       c("France","Italy"),
+       fill = c(adjustcolor("#3182bd", 0.5),
+                adjustcolor("#31a354", 0.5)))
+
+
+# China and India Overlaid
+radarchart(test_country[c(1,2,3,5),],
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("#e34a33", 0.5),
+                adjustcolor("#feb24c", 0.5)),
+           pfcol = c(adjustcolor("#e34a33", 0.5),
+                adjustcolor("#feb24c", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       c("China","India"),
+       fill = c(adjustcolor("#e34a33", 0.5),
+                adjustcolor("#feb24c", 0.5)))
+
+
+
+
+```
+
+Some interesting observations here. The Italian students want a partner who is attractive, intelligent and fun, whilst the French students do not care about fun at all but demand someone who is ambitious.
+
+```{r More radar graphs,}
+# split the divisions by gender and country
+
+# create a smaller dataframe, grouped by gender for the radar chart
+rad_ita <-LBS_clean %>%
+  group_by(gender, from) %>%
+  summarise(Attractive = mean(attr1_1), 
+            Sincere = mean(sinc1_1),
+            Intelligent = mean(intel1_1), 
+            Fun = mean(fun1_1),
+            Ambitious = mean(amb1_1),
+            Interest = mean(shar1_1))
+
+# modify for plotting
+rad_ita_forplot <- rad_ita %>% 
+  filter(from == 'Italy') 
+
+# Couldn't get the code to work, so I have just summarised the data in a table
+print(rad_ita)
+
+# write it to csv
+write.csv(rad_ita, 'Table - country and gender split')
+
+# rad_ita_forplot <- rad_ita_forplot %>% 
+#   select(-gender -from)
+
+# # add it to the plot dataframe
+# rad_ita_forplot <- rbind(maxmin, rad_ita_forplot)
+# 
+# 
+# # plot the radar chart
+# radarchart(rad_ita_forplot,
+#            pty = 32,
+#            axistype = 0,
+#            pcol = c(adjustcolor("hotpink1", 0.5), adjustcolor("cadetblue2", 0.5)),
+#            pfcol = c(adjustcolor("hotpink1", 0.5), adjustcolor("cadetblue2", 0.5)),
+#            plty = 1,
+#            plwd = 3,
+#            cglty = 1,
+#            cglcol = "gray88",
+#            centerzero = TRUE,
+#            seg = 5,
+#            vlcex = 0.75,
+#            palcex = 0.75)
+# 
+# legend("topleft", 
+#        c("Male", "Female"),
+#        fill = c(adjustcolor("cadetblue2", 0.5), adjustcolor("hotpink1", 0.5)))
+
+```
+
+
+
+### What people look for in partners split by continent
+
+```{r Radar graph by continent}
+# create a smaller dataframe, grouped by gender for the radar chart
+test_cont <-LBS_clean %>%
+  group_by(from_cont) %>%
+  summarise(Attractive = mean(attr1_1),
+            Sincere = mean(sinc1_1),
+            Intelligent = mean(intel1_1),
+            Fun = mean(fun1_1), 
+            Ambitious = mean(amb1_1),
+            Interest = mean(shar1_1))
+
+# modify for plotting and select the countries with most responses
+test_cont_forplot <- test_cont %>% 
+  select(-from_cont)
+
+
+# add it to the plot dataframe
+test_cont_forplot <- rbind(maxmin, test_cont_forplot)
+
+# Europe 
+radarchart(test_cont_forplot[c(1,2,4),],
+           pty = 32,
+           axistype = 0,
+           pcol = adjustcolor("#003399", 0.7),
+           pfcol = adjustcolor("#003399", 0.7),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       "Europe",
+       fill = adjustcolor("#003399",0.7))
+
+# Just Asia
+radarchart(test_cont_forplot[c(1,2,4),],
+           pty = 32,
+           axistype = 0,
+           pcol = adjustcolor("#fd8d3c", 0.7),
+           pfcol = adjustcolor("#fd8d3c", 0.7),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       "Asia",
+       fill = adjustcolor("#fd8d3c",0.7))
+
+# Asia, Europe and Other overlaid
+radarchart(test_cont_forplot[c(1,2,3,4,5),],
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("#fd8d3c", 0.5),
+                adjustcolor("#003399", 0.5),
+                adjustcolor("#d9d9d9",0.5)),
+           pfcol = c(adjustcolor("#fd8d3c", 0.5),
+                adjustcolor("#003399", 0.5),
+                adjustcolor("#d9d9d9",0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       c("Asia","Europe","Other"),
+       fill = c(adjustcolor("#fd8d3c", 0.5),
+                adjustcolor("#003399", 0.5),
+                adjustcolor("#d9d9d9",0.5)))
+
+
+# Overlay just asia and europe
+radarchart(test_cont_forplot[c(1,2,3,4),],
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("#fd8d3c", 0.5),
+                adjustcolor("#003399", 0.5)),
+           pfcol = c(adjustcolor("#fd8d3c", 0.5),
+                adjustcolor("#003399", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       c("Asia","Europe"),
+       fill = c(adjustcolor("#fd8d3c", 0.5),
+                adjustcolor("#003399", 0.5)))
+
+
+
+
+
+```
+
+
+### Differing perceptions between men and women on themselves and how others perceive them
+
+```{r Radar Chart - how do they rate themselves vs how they think people rate them}
+# copy a new df
+perceptions_df <- LBS_data
+
+# total for 
+perceptions_df$total <- rowSums(perceptions_df[,c("attr3_1",
+                                          "sinc3_1",
+                                          "intel3_1", 
+                                          "fun3_1", 
+                                          "amb3_1")])
+
+perceptions_df$total2 <- rowSums(perceptions_df[,c("attr5_1",
+                                          "sinc5_1",
+                                          "intel5_1", 
+                                          "fun5_1", 
+                                          "amb5_1")])
+
+# clean relevant data
+# the points are redistributed and curved to fit 100 total points (selves)
+perceptions_df$attr3_1 <- round((perceptions_df$attr3_1/perceptions_df$total)*100, digits = 2)
+perceptions_df$sinc3_1 <- round((perceptions_df$sinc3_1/perceptions_df$total)*100, digits = 2)
+perceptions_df$intel3_1 <- round((perceptions_df$intel3_1/perceptions_df$total)*100, digits = 2)
+perceptions_df$fun3_1 <- round((perceptions_df$fun3_1/perceptions_df$total)*100, digits = 2)
+perceptions_df$amb3_1 <- round((perceptions_df$amb3_1/perceptions_df$total)*100, digits = 2)
+
+# clean the datapoints of how others percieve you
+# the points are redistributed and curved to fit 100 total points
+perceptions_df$attr5_1 <- round((perceptions_df$attr5_1/perceptions_df$total2)*100, digits = 2)
+perceptions_df$sinc5_1 <- round((perceptions_df$sinc5_1/perceptions_df$total2)*100, digits = 2)
+perceptions_df$intel5_1 <- round((perceptions_df$intel5_1/perceptions_df$total2)*100, digits = 2)
+perceptions_df$fun5_1 <- round((perceptions_df$fun5_1/perceptions_df$total2)*100, digits = 2)
+perceptions_df$amb5_1 <- round((perceptions_df$amb5_1/perceptions_df$total2)*100, digits = 2)
+
+
+
+# Create a dataframe to store data of how people see themselves 
+test_selves <-LBS_clean %>%
+  group_by(gender) %>%
+  summarise(Attractive = mean(attr3_1), 
+            Sincere = mean(sinc3_1), 
+            Intelligent = mean(intel3_1),
+            Fun = mean(fun3_1),
+            Ambitious = mean(amb3_1))
+
+# Create a dataframe to store data of how people think other's perceive them
+test_others <- LBS_clean %>%
+  group_by(gender) %>%
+  summarise(Attractive = mean(attr5_1), 
+            Sincere = mean(sinc5_1), 
+            Intelligent = mean(intel5_1), 
+            Fun = mean(fun5_1), 
+            Ambitious = mean(amb5_1))
+
+
+# modify for plotting
+test_selves_forplot <-
+test_selves %>% 
+  select(-gender)
+
+# modify for plotting
+test_others_forplot <-
+test_others %>% 
+  select(-gender)
+
+# new maxmin
+maxmin2 <- data.frame(
+ Attractive = c(12, 0),
+ Sincere = c(12, 0),
+ Intelligent = c(12, 0),
+ Fun = c(12, 0),
+ Ambitious = c(12, 0))
+
+# create relevant plotting df
+men <- rbind(maxmin2,
+             test_selves_forplot[1,],
+             test_others_forplot[2,])
+
+women <- rbind(maxmin2,
+               test_selves_forplot[2,],
+               test_others_forplot[1,])
+```
+
+
+
+```{r plot the radar charts}
+# plot men
+radarchart(men,
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("peachpuff4", 0.5),
+                adjustcolor("#9ebcda", 0.5)),
+           pfcol = c(adjustcolor("peachpuff4", 0.5),
+                adjustcolor("#9ebcda", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       c("How men see themselves","How men think others see them"),
+       pt.cex = 1,
+       cex = 0.8,
+       fill = c(adjustcolor("peachpuff4", 0.5),
+                adjustcolor("#9ebcda", 0.5)))
+
+# plot women
+radarchart(women,
+           pty = 32,
+           axistype = 0,
+           pcol = c(adjustcolor("#fa9fb5", 0.5),
+                adjustcolor("#756bb1", 0.5)),
+           pfcol = c(adjustcolor("#fa9fb5", 0.5),
+                adjustcolor("#756bb1", 0.5)),
+           plty = 1,
+           plwd = 3,
+           cglty = 1,
+           cglcol = "gray88",
+           centerzero = TRUE,
+           seg = 5,
+           vlcex = 0.75,
+           palcex = 0.75)
+
+legend("topleft",
+       c("How women see themselves","How women think others see them"),
+       pt.cex = 1,
+       cex = 0.8,
+       fill = c(adjustcolor("#fa9fb5", 0.5),
+                adjustcolor("#756bb1", 0.5)))
+
+```
+
+
+# Model building to predict matches for LBS students
+
+```{r model building}
+# create a dataset with columns relevant to the model
+LBS_modeldf <- LBS_data %>% 
+  select(-orientation, -share_code, - from_cont)
+
+# create the relevant speed-dating dataset
+model_df <- data %>% 
+  select(colnames(LBS_modeldf), match)
+
+# drop columns with more 30% na
+model_df <- model_df[, -which(colMeans(is.na(model_df)) > 0.3)]
+
+# create model
+model1 <- glm(match ~ . -iid -from - career ,
+              family = 'binomial'(link=logit),
+             data=model_df)
+
+# summary
+summary(model1)
+
+```
+
+There are several variables which are significant in predicting whether a match is found. Let's choose the relevant ones and see how our model improves
+
+```{r model refinement}
+# select the relevant model variables (for the LBS dataset)
+model2 <- glm(as.factor(match) ~ age + 
+               imprace +
+               date +
+               go_out +
+               art +
+               clubbing +
+               reading +
+               movies +
+               shopping +
+               shar1_1 +
+               intel2_1,
+              family = 'binomial'(link=logit),
+             data=model_df)
+
+# summarise
+summary(model2)
+
+# remove shopping as it is no longer significant
+model3 <- glm(as.factor(match) ~ age + 
+               imprace +
+               date +
+               go_out +
+               art +
+               clubbing +
+               reading +
+               movies +
+               shar1_1 +
+               intel2_1,
+              family = 'binomial'(link=logit),
+             data=model_df)
+
+# summarise
+summary(model3)
+
+```
+
+Model 3 has all significant variables. Use McFadden $R^{2}$ index to assess model fit.
+
+```{r McFadden R^2}
+library(pscl)
+
+pR2(model3)
+
+```
+
+As we can see, the model has a '$R^{2}$' score of 0.035. This is a very low score and it can be attributed to two main factors. The main reason is that the most significant predictors of a match (or the variables with the highest correlation with a match) are values which are recorded during/after the date. As we do not have access to this dataset for LBS students, we have limited ourselves to the pre-date data available. Secondly, the different variables (categorical, ordinal etc.) used to predict a binary variable meant that the usual methods of linear regression were insufficient. In this case, even the logistic regression applied to the dataset may be inadequate and other methods of modelling could be further investigated to improve our results.
+
+```{r prediction}
+# build a prediction dataframe
+LBS_predict <- LBS_clean%>% 
+  select(iid,
+         age, 
+         imprace, 
+         date,
+         go_out, 
+         art, 
+         clubbing,
+         reading, 
+         movies, 
+         shar1_1, 
+         intel2_1)
+
+# clean the data
+LBS_predict <- LBS_clean %>%
+  mutate(
+    age = case_when(age == '22 - 24' ~ 23,
+                    age == '25 +' ~ 25,
+                    age == '19 - 21' ~ 20
+                      ),
+    date = case_when(date=='Several times a year' ~ 6,
+                     date=='Several times a week' ~ 1,
+                     date=='Once a week' ~ 3,
+                     date=='Twice a week' ~ 2,
+                     date=='Almost never' ~7
+      
+    ),
+    go_out = case_when(go_out=='Several times a year' ~ 6,
+                     go_out=='Several times a week' ~ 1,
+                     go_out=='Once a week' ~ 3,
+                     go_out=='Twice a week' ~ 2,
+                     go_out=='Almost never' ~7
+                     )
+  )
+
+
+# predict
+LBS_predict <- LBS_predict %>% 
+  mutate(prediction = predict(model3, newdata=LBS_predict, type='response'))
+
+# save to csv and have Garance analyse (only she knows the names)
+write.csv(LBS_predict, 'predicted chance of matching.csv')
+
+# let's see the top 20 most matchworthy people
+heart <- LBS_predict %>% 
+  arrange(desc(prediction)) %>% 
+  head(20) %>% 
+  select(iid, prediction)
+
+heart
+
+```
+
+
+## Random Forest Classifier to determine importance of variables
+
+We can build a random forest classifier to determine the importance of each variable.
+
+
+```{r RF}
+library(randomForest)
+# Set the random seed to make this result reproducible
+set.seed(50)
+
+# Drop Na so nothing breaks
+model_tree <- drop_na(model_df)
+
+# Feed a randomForest model
+fit <- randomForest(as.factor(match) ~ age + 
+               imprace +
+               date +
+               go_out +
+               art +
+               clubbing +
+               reading +
+               movies +
+               shar1_1 +
+               intel2_1,
+          data = model_tree,
+          importance=TRUE, 
+          ntree=1000
+)
+
+# Get the importance of the features
+# We need to perform several operations on the fit$importance field, including:
+#  - take only the column we are interested in,
+#  - create a new column with the rowname on it,
+#  - rename the columns.
+importance.features <- tibble::rownames_to_column(data.frame(fit$importance[,c(1)]))
+colnames(importance.features) <- c("rowname", "value")
+
+# Plot the importance of the features for people
+ggplot(importance.features, aes(x = reorder(rowname, -value), y = value)) +
+  geom_bar(stat = "identity", position = "dodge", fill="mistyrose2", colour="black") +
+  xlab("Feature") + ylab("Count") + ggtitle("Importance of a Feature") +
+  coord_flip()
+
+
+
+```
+
+
+### Importance of Feature for Men
+```{r RF Men}
+model_treeM <- model_tree %>% 
+  filter(gender == 1)
+
+# Feed a randomForest model
+fit <- randomForest(as.factor(match) ~ age + 
+               imprace +
+               date +
+               go_out +
+               art +
+               clubbing +
+               reading +
+               movies +
+               shar1_1 +
+               intel2_1,
+          data = model_treeM,
+          importance=TRUE, 
+          ntree=1000
+)
+
+# Get the importance of the features
+# We need to perform several operations on the fit$importance field, including:
+#  - take only the column we are interested in,
+#  - create a new column with the rowname on it,
+#  - rename the columns.
+importance.features <- tibble::rownames_to_column(data.frame(fit$importance[,c(1)]))
+colnames(importance.features) <- c("rowname", "value")
+
+# Plot the importance of the features for a man
+ggplot(importance.features, aes(x = reorder(rowname, -value), y = value)) +
+  geom_bar(stat = "identity", position = "dodge", fill="cadetblue3", colour="black") +
+  xlab("Feature") + ylab("Count") + ggtitle("Importance of a Feature for Men") +
+  coord_flip()
+
+```
+
+
+### Importance of Feature for Women
+
+```{r RF Women}
+model_treeF <- model_tree %>% 
+  filter(gender == 0)
+
+# Feed a randomForest model
+fit <- randomForest(as.factor(match) ~ age + 
+               imprace +
+               date +
+               go_out +
+               art +
+               clubbing +
+               reading +
+               movies +
+               shar1_1 +
+               intel2_1,
+          data = model_treeF,
+          importance=TRUE, 
+          ntree=1000
+)
+
+# Get the importance of the features
+# We need to perform several operations on the fit$importance field, including:
+#  - take only the column we are interested in,
+#  - create a new column with the rowname on it,
+#  - rename the columns.
+importance.features <- tibble::rownames_to_column(data.frame(fit$importance[,c(1)]))
+colnames(importance.features) <- c("rowname", "value")
+
+# Plot the importance of the features for a woman
+ggplot(importance.features, aes(x = reorder(rowname, -value), y = value)) +
+  geom_bar(stat = "identity", position = "dodge", fill="hotpink1", colour="black") +
+  xlab("Feature") + ylab("Count") + ggtitle("Importance of a Feature for Women") +
+  coord_flip()
+
+```
+
+
