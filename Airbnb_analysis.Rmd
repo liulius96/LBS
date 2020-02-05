@@ -1,0 +1,741 @@
+---
+title: "Individual Assignment: Data Analytics of AirBnB prices"
+author: "Tony Liu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    highlight: zenburn
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    code_folding: show
+---
+
+
+```{r setup, include=FALSE}
+# leave this chunk alone
+options(knitr.table.format = "html") 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, 
+  comment = NA, dpi = 300)
+```
+
+
+```{r load-libraries, echo=FALSE}
+
+library(tidyverse) # the usual stuff: dplyr, readr, and other goodies
+library(lubridate) # to handle dates
+library(GGally) # for correlation-scatter plot matrix
+library(ggfortify) # to produce residual diagnostic plots
+library(rsample) # to split dataframe in training- & testing sets
+library(janitor) # clean_names()
+library(broom) # use broom:augment() to get tidy table with regression output, residuals, etc
+library(huxtable) # to get summary table of all models produced
+library(kableExtra) # for formatting tables
+library(moderndive) # for getting regression tables
+library(skimr) # for skim
+library(mosaic)
+library(leaflet) # for interactive HTML maps
+library(car) # calculate VIF (Variance Inflation Factor) to check for colinearity, using car::vif()
+```
+
+
+# Executive Summary
+
+A model for predicting the price of staying at an Airbnb in Greater Manchester (4 nights, 2 guests) was built. The model contained 10 independent variables and gave the following results from cross-validation (K-fold with 5 folds):
+
+## Model
+
+$R^{2}$ score of 0.5888 
+$RMSE$ of 0.4636 for the log(Price of 4 nights).
+
+
+## Prediction
+Testing this on a specified data set of apartments, we obtained the following results:
+
+$RMSE$ of 0.4174 for the log(Price of 4 nights) 
+$RMSE$ of 965.8 for the price of 4 nights
+
+
+
+# Data Summary
+
+
+```{r get_data, echo=FALSE}
+
+# load listings data for Greater Manchester AKA the greatest city in the world
+listings <- read_csv("listings.csv.gz") %>% 
+  clean_names() %>% 
+  
+  #drop variables that contain 'scrape' in their column name
+  select(- contains("scrape"))
+```
+
+
+```{r clean_price_data}
+
+listings <- listings %>% 
+  mutate(
+    price = readr::parse_number(price),
+    cleaning_fee = readr::parse_number(cleaning_fee),
+    extra_people = readr::parse_number(extra_people)
+  )
+
+# Quickly check whether these variables are numeric, if we have any zero prices for `price` and if there are any NAs
+listings %>% 
+  select(price, cleaning_fee, extra_people) %>% 
+  skim()
+
+```
+
+A missing value in the 'cleaning_fee' column probably means indicates there is no cleaning fee.
+
+
+```{r cleaning column - cleaning_fee}
+listings <- listings %>%
+  mutate(cleaning_fee = case_when(
+    is.na(cleaning_fee) ~ 0, 
+    TRUE ~ cleaning_fee
+  ))
+
+skim(listings %>% select(cleaning_fee))
+```
+
+We have confirmed that there is are missing values in the cleaning_fee column.
+
+
+```{r property type}
+listings %>% 
+  count(property_type)%>%
+  mutate(pct_total = 100*n/sum(n))%>%
+  arrange(desc(n))
+
+```
+
+From the table, we can see that the four most frequent property types are Apartment (40.4%), House (38.5%), Townhouse (6.7%) and Condominium (5.1%).
+
+## Creating a new column for simplified property types
+
+```{r categorise the property_type}
+listings <- listings %>%
+  mutate(prop_type_simplified = case_when(
+    property_type %in% c("Apartment","House", "Townhouse","Condominium") ~ property_type, 
+    TRUE ~ "Other"
+  ))
+
+```
+
+
+```{r check prop type}
+listings %>%
+  count(property_type, prop_type_simplified) %>%
+  arrange(desc(n))        
+```        
+
+## Checking Airbnb listings are for travel purposes
+
+
+```{r minimum nights}
+skim(listings$minimum_nights)
+
+# most common values for min. nights
+listings %>%
+  count(minimum_nights) %>%
+  arrange(desc(n)) %>%
+  head(5)
+
+# large values
+listings %>% 
+  select(minimum_nights) %>% 
+  arrange(desc(minimum_nights)) %>% 
+  head(5)
+
+```
+
+We can see that the 5 most common values for minimum nights are 1 (n=2621), 2 (n=1400), 3 (n=330), 7 (n=105) and 5 (n=91).
+
+The 5 largest values for minimum nights are 365, 365, 300, 300 and 280. The 365 listings appear to be long-term rent listings on airbnb, for a full year, whilst the 300 listings are approximately 9 months and could suit students or graduates looking to rent for that period in Manchester. The 280 is a bit more unusual but I would suggest it is in the same vein of targetting longer term student tenants.
+
+
+```{r filter min nights}
+# filter for number of nights less than or equal to 4
+listings2 <- listings %>% 
+  filter(minimum_nights <= 4)
+
+```
+
+# Exploratory Data Analysis (EDA)
+
+The code below was set to eval = FALSE because it output too much information in the knitted file and did not contribute well to understanding the data. 
+
+The main information I used from the below summaries were the tables from skim(). These tables gave a summary of each type of variable (character, numeric, logical) and summary information like missing values. I used the numeric table to perform a cross-correlation check with our price to help choose variables for model analysis. I also scanned the tables of other types of variables to pick the ones I thought would aid in modelling.
+
+```{r EDA, eval=F}
+glimpse(listings2)
+# favstats(listings2[,sapply(listings2, is.numeric)])
+skim(listings2)
+
+
+```
+
+From skim, we can see that numeric variables like price, accommodates, guest_included and extra people are complete. This will allow us to properly calculate the price for two people staying four nights. Issues, however, will arise when we try to build our linear model. Variables like review_scores_rating have 644 values missing - 16.7% of the total entries. This could heavily bias our model depending on what entries are missing.
+
+A quick view of the data suggests that these listings are all new, as there is no rating for any of the other review columns like cleaniness, location or communication.
+
+```{r EDA part 2}
+# plot the average prices by property type
+library(scales)
+ggplot(listings2, aes(x=reorder(prop_type_simplified, price, FUN=median), 
+                      y=price)) + #reorder the types based on median
+  geom_boxplot() +
+  labs(title='Pricing for each property type',
+       x='Property Type',
+       y='Price (USD)') +
+  scale_y_continuous(labels=dollar)+ 
+  coord_flip(ylim = c(0,200)) # flip and limit the price axis so that more information is shown
+  
+
+```
+
+
+We can see from the boxplot that the median price of condominiums is the most expensive, whilst the median price of houses are the least expensive. Whilst this may be surprising for someone from a metropolis like London, we have to bear in mind that the data is from listings all across Greater Manchester. As a very decentralised city with many smaller town centres, there are lots of inexpensive housing available further from the centre. Most of the condominiums, as well as the apartments, will be located in the city centre - raising their listing price. 
+
+The category of listings, Other, can be expected to have a greater inter-quartile range as it contains many different properties. What is surprising, however, is that townhouses have a similarly large spread in IQR. 
+
+
+Having been an airbnb guest several times, my intuition is that the number of guests that a property can accommodate is going to be an extremely important factor in determining the price. Let's visualise the relationship between these two variables and see their correlation.
+
+```{r EDA part 3}
+library(hexbin)
+# plot the relationship between number of guests a property can accommodate and its listing price
+ggplot(listings2, aes(x=accommodates,y=price)) +
+  geom_hex() +
+  labs(title='Relationship between accommodated guests and price',
+       x='Number of Guests Property Can Accommodate',
+       y='Price (USD)') +
+  scale_y_continuous(labels=dollar) +
+  coord_cartesian()
+
+# let's view a boxplot
+ggplot(listings2, aes(x=accommodates,y=price)) +
+  geom_boxplot(mapping=aes(group=cut_width(accommodates,1))) + # boxplot in step-sizes of 1
+  labs(title='Relationship between accommodated guests and price',
+       x='Number of Guests Property Can Accommodate',
+       y='Price (USD)') +
+  scale_y_continuous(labels=dollar) +
+  coord_cartesian(xlim= c(0,20),
+                  ylim= c(0,500))
+
+# One Way ANOVA test between a categorical independent variable and a continuous dependent variable
+res.aov <- aov(price ~ accommodates, data = listings2)
+
+# Summary
+summary(res.aov)
+
+```
+
+The boxplot shows a clear upwards trend in price as the number of guests the property can accommodate increases. To confirm the inference from our plot, the one-way ANOVA test was used to test the correlation between the dependent continuous variable and the independent categorical variable. The p-value of ~0 shows that the two variables are strongly correlated. 
+
+Finally, let's compute a spearman's correlation matrix for all the numeric variables in our dataframe. We can use the information to select variables with a high correlation for our model.
+
+```{r EDA correlation matrix}
+# pull our all the numeric columns of the dataframe
+listings_numeric <- dplyr::select_if(listings2, is.numeric)
+
+# build the correlation matrix
+res <- cor(listings_numeric, method='spearman')
+
+# pull the column with price only
+colnames(res)
+
+# number 12 is price, pull it with values rounded to 2 dp
+round(res[,12],2)
+
+```
+
+
+
+# Mapping 
+
+Visualisations of feature distributions and their relations are key to understanding a data set, and they can open up new lines of exploration. While we do not have time to go into all the wonderful geospatial visualisations one can do with R with the `sf` package, you can use the following code to start with a map of your city, and overlay all AirBnB coordinates to get an overview of the spatial distribution of AirBnB rentals. For this visualisation we use the `leaflet` package, which includes a variety of tools for interactive maps, so you can easily zoom in-out, click on a point to get the actual AirBnB listing for that specific point, etc.
+
+The following code, having created a dataframe `listings` with all AirbnB listings in Amsterdam, will plot on the map all AirBnBs where `minimum_nights` is less than equal to four (4). You could learn more about `leaflet`, by following [the relevant Datacamp course on mapping with leaflet](https://www.datacamp.com/courses/interactive-maps-with-leaflet-in-r)
+
+
+```{r, out.width = '100%'}
+
+leaflet(data = filter(listings, minimum_nights <= 4)) %>% 
+  addProviderTiles("OpenStreetMap.Mapnik") %>% 
+  addCircleMarkers(lng = ~longitude, 
+                   lat = ~latitude, 
+                   radius = 1, 
+                   fillColor = "blue", 
+                   fillOpacity = 0.4, 
+                   popup = ~listing_url,
+                   label = ~property_type)
+```
+
+    
+# Regression Analysis
+
+## Histogram and Density Plots
+
+```{r regression set up}
+listings2 <-  listings2 %>% 
+  # only keep places that accommodate more than one guest
+  filter(accommodates != 1) %>% 
+  # create a dummy column to see if the guests included is greater than 2
+  mutate(guest_inc = case_when(
+    guests_included >= 2 ~ T,
+    guests_included < 2 ~ F),
+  # create the column for the price of 4 nights
+  price_4_nights = price*4+
+    cleaning_fee+
+    guest_inc*extra_people)
+
+# plot the histograms and density plots to determine which var to use
+# price_4_nights histogram
+hist1 <- ggplot(listings2, aes(x=price_4_nights)) +
+  geom_histogram() +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Price (USD)',
+       y='Count')
+hist1
+
+# price_4_nights density plot
+dens1 <- ggplot(listings2, aes(x=price_4_nights, fill=prop_type_simplified)) +
+  geom_density(alpha=0.3) +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Price (USD)',
+       y='Density')
+dens1
+
+# Checking for outliers due to shape of histogram
+listings2 %>% 
+  select(price_4_nights) %>% 
+  arrange(desc(price_4_nights)) %>% 
+  head(10)
+
+
+# For visualisation purposes, we can cut out the top 5
+listings3 <- listings2 %>% 
+  arrange(desc(price_4_nights)) %>% 
+  tail(-5)
+
+#plot the histogram again
+hist2 <- ggplot(listings3, aes(x=price_4_nights)) +
+  geom_histogram(binwidth = 200) +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Price (USD)',
+       y='Count')
+hist2
+
+#or limit the values on the axis
+hist4 <- ggplot(listings3, aes(x=price_4_nights)) +
+  geom_histogram(binwidth = 50) +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Price (USD)',
+       y='Count') +
+  coord_cartesian(xlim = c(0,2000))
+hist4 
+
+# similarly for the density plot
+dens3 <- ggplot(listings2, aes(x=price_4_nights, fill=prop_type_simplified)) +
+  geom_density(alpha=0.3) +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Price (USD)',
+       y='Density') +
+   coord_cartesian(xlim = c(0,2000))
+dens3
+
+
+
+# Log plots
+# log histogram plot
+hist3 <- ggplot(listings2, aes(x=log(price_4_nights))) +
+  geom_histogram(bins=40) +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Logarithm of Price (log USD)',
+       y='Count')
+hist3
+
+# log(price_4_nights) density plot
+dens2 <- ggplot(listings2, aes(x=log(price_4_nights), fill=prop_type_simplified)) +
+  geom_density(alpha=0.3) +
+  theme_bw() +
+  labs(title='Density Plot of Airbnb Price (4 nights, 2 Persons)',
+       x='Logarithm of Price (log USD)',
+       y='Density')
+dens2
+
+
+
+```
+
+From the graphs, it can be inferred that using the logarithm of price_4_nights would be much more appropriate.
+
+I will be using the logarithm of price_4_nights. This is because a lot of the prices are closely packed together and there are a few extreme outliers which skew the results heavily. It might be worth taking out these outliers as they are very extreme and also accommodates more than 2 people.
+
+
+# Model Building
+
+```{r linear model 1}
+
+#cleaning the log column
+listings_model <- listings2 %>% 
+  mutate(log_p4n = log(price_4_nights)) %>% 
+  drop_na(log_p4n)
+
+listings_model <- listings_model[is.finite(listings_model$log_p4n),] #remove infinite
+
+# building the first model to determine if room type is a significant predictor of cost of 4 nights
+model1 <- lm(log_p4n ~ prop_type_simplified +
+               number_of_reviews+
+               review_scores_rating,
+             listings_model)
+
+summary(model1)
+
+#build a second model with the actual price of 4 nights and not the logarithm
+model2 <-lm(price_4_nights ~prop_type_simplified +
+               number_of_reviews+
+               review_scores_rating,
+             listings_model)
+
+summary(model2)
+
+```
+
+
+The reviews score rating only increases the price of staying at a place on airbnb (4 nights, 2 people) by 0.998 USD (\exp{-0.0021979}) per increase in the review score. It is important to note, however, that the review_scores_rating variable has a t-score of -1.660 and a p-value of 0.971, meaning that it is statistically insignificant for explaining the dependent variable in this model.
+
+The simplified property types become categorical variables which adjust the pricing of the stay depending on what type the property listing is. We can see that the base category is apartment, as it is missing, and each of the other variables is a modifier. From model 1, it can be seen that all of the property types, excluding Conominium, are significant in predicting the price of the stay. 
+
+In model 2, where the price of the stay was not logged, the only significant property type is House. This reduces the price of the stay by $143 on average when compared to an apartment.
+
+## Further variables/questions to explore on our own
+
+The variables accommodates, bedrooms, entire homes and private rooms had high correlation scores with the price. We can also include bathrooms and beds to build an initial model before determining which variables are redundant. Given the difference in the $r^{2}$ scores in the last two models, I will be working with the the logged log_p4n variable and not original price_4_nights variable.
+
+Variables to include:
+accommodates
+bathrooms
+bedrooms
+beds
+number_of_reviews
+calculated_host_listings_count_entire_homes
+calculated_host_listings_count_private_rooms
+prop_type_simplified
+room_type
+
+
+```{r Model Refinement}
+# build the model
+model3 <- lm(log_p4n ~ accommodates +
+               bathrooms +
+               bedrooms +
+               beds +
+               number_of_reviews +
+               calculated_host_listings_count_entire_homes +
+               calculated_host_listings_count_private_rooms +
+               prop_type_simplified +
+               room_type, data=listings_model)
+
+summary(model3)
+
+```
+
+Number of beds is insignificant, let's see if it interacts with the number of bedrooms and delete the insignificant variables.
+
+```{r Model Refinement continued}
+
+# build the model
+model4 <- lm(log_p4n ~ accommodates +
+               bathrooms +
+               bedrooms +
+               beds +
+               bedrooms*beds +
+               number_of_reviews +
+               calculated_host_listings_count_private_rooms +
+               prop_type_simplified +
+               room_type, data=listings_model)
+
+summary(model4)
+
+autoplot(model4)
+
+car::vif(model4)
+```
+
+We can see that given the interaction, all of the variables in the model are now significant.
+
+This model achieves a multiple $R^{2}$ value of 0.5883. Whilst this is good, it still explains only half the variability in the dependent variable.  There are also some variables we have excluded due to the differing nature of the variables, which we will now include to further refine the model.
+
+There is no way to tell whether they will be significant unless we include them into the model, the variables included will be:
+require_guest_phone_verification,
+require_guest_profile_picture,
+host_is_superhost,
+instant_bookable,
+host_identity_verified
+
+
+
+```{r Model Refinement 3}
+# # parse host response rate
+# listings-model <- listings_model %>% 
+#   mutate(host_response_rate= case_when(
+#       is.na(host_response_rate) ~ '0%',
+#       TRUE ~ host_response_rate
+#     ),
+#     host_response_rate= readr::parse_number(host_response_rate)
+#   )
+
+# build the model
+model5 <- lm(log_p4n ~ accommodates +
+               bathrooms +
+               bedrooms +
+               beds +
+               bedrooms*beds +
+               number_of_reviews +
+               calculated_host_listings_count_private_rooms +
+               prop_type_simplified +
+               room_type +
+               require_guest_phone_verification +
+               require_guest_profile_picture +
+               host_is_superhost +
+               instant_bookable +
+               host_identity_verified, 
+            data=listings_model)
+
+summary(model5)
+
+autoplot(model5)
+
+car::vif(model5)
+
+```
+
+Delete insignificant variables.
+
+
+```{r Model Refinement 4}
+# build the model
+model6 <- lm(log_p4n ~ accommodates +
+               bathrooms +
+               bedrooms +
+               beds +
+               bedrooms*beds +
+               number_of_reviews +
+               calculated_host_listings_count_private_rooms +
+               prop_type_simplified +
+               room_type +
+               instant_bookable +
+               host_identity_verified, 
+            data=listings_model)
+
+summary(model6)
+
+autoplot(model6)
+
+car::vif(model6)
+
+```
+
+
+One variable which has constantly been insignificant is the property type condominium. Given that these are essentially apartments and the difference is only regarding the owner, this should have no effect on the renters of this Airbnb listing. Let's try and combine the two and redo our model.
+
+
+```{r Model Refinement 5}
+listings_model <- listings_model %>%
+  mutate(prop_type_simplified = case_when(
+    prop_type_simplified %in% c("Apartment","House", "Townhouse") ~ prop_type_simplified, 
+    prop_type_simplified == "Condominium" ~ "Apartment",
+    TRUE ~ "Other"
+  ))
+
+# build the model
+model7 <- lm(log_p4n ~ accommodates +
+               bathrooms +
+               bedrooms +
+               beds +
+               bedrooms*beds +
+               number_of_reviews +
+               calculated_host_listings_count_private_rooms +
+               prop_type_simplified +
+               room_type +
+               instant_bookable +
+               host_identity_verified, 
+            data=listings_model)
+
+summary(model7)
+
+autoplot(model7)
+
+car::vif(model7)
+
+
+```
+
+We Achieve a final $R^{2}$ score of 0.5898. The methodology for a linear model was followed in a good manner, one explanation for the lower $R^{2}$ score could be that a linear model does not fit the data well. Neighbourhood is likely to be a significant predictor for our dependent variable, the time constraints, however, meant that this avenue was not be explored.
+
+
+
+
+# Diagnostics, collinearity, summary tables
+
+
+```{r summary}
+
+# Final model summary
+mosaic::msummary(model7)
+
+
+# huxtable for different models
+huxtable::huxreg(model1, model3, model4, model5, model6, model7,
+                 number_format = "%.2f",
+                 statistics = c('R squared' = 'r.squared', 'Adj. R Squared' = 'adj.r.squared', 'Residual SE' = 'sigma'), 
+                 bold_signif = 0.05, 
+                 stars = NULL
+       ) %>% 
+  theme_article()
+
+```
+
+
+```{r Model Validation - train test split}
+# K-Fold cross validation with 5 subsets
+set.seed(1234)
+library(caret)
+
+# define the training control
+train.control <- trainControl(method='cv', number = 5)
+
+# check dataset
+listings_cv <- listings_model %>% 
+  select(log_p4n,
+         accommodates,
+               bathrooms,
+               bedrooms,
+               beds,
+               number_of_reviews,
+               calculated_host_listings_count_private_rooms,
+               room_type,
+               prop_type_simplified,
+               instant_bookable,
+               host_identity_verified)
+
+# see which values are missing
+skim(listings_cv)
+
+# we can see that beds has 9 missing values - we can safely drop these
+listings_cv <- drop_na(listings_cv)
+
+# train the model
+model_cv <- train(log_p4n ~ accommodates +
+               bathrooms +
+               bedrooms +
+               beds +
+               bedrooms*beds +
+               number_of_reviews +
+               calculated_host_listings_count_private_rooms +
+               room_type +
+               prop_type_simplified +
+               instant_bookable +
+               host_identity_verified, 
+            data=listings_cv,
+            method = 'lm',
+            trControl = train.control)
+
+print(model_cv)
+
+```
+
+## Prediction
+
+```{r prediction}
+library(Metrics)
+# data selection
+test_set <- listings2 %>% 
+  filter(property_type == 'Apartment',
+         review_scores_rating >= 90,
+         number_of_reviews >= 10,
+         room_type == 'Private Room')
+# overview
+nrow(test_set)
+
+#let's see if we get any variables by loosening the definition
+test_set2 <- listings2 %>% 
+  filter(prop_type_simplified == 'Apartment',
+         review_scores_rating >= 90,
+         number_of_reviews >= 10,
+         room_type == 'Private Room')
+
+nrow(test_set2)
+
+# There were still no rooms so let's just say Entire home/apt	
+test_set3 <- listings_model %>% 
+  filter(prop_type_simplified == 'Apartment',
+         review_scores_rating >= 90,
+         number_of_reviews >= 10,
+         room_type == 'Entire home/apt')
+
+nrow(test_set3)
+
+# predict
+test_set3 <- test_set3 %>% 
+  mutate(predictions = predict(model7,.)) 
+
+# find rmse
+rmse_price <- rmse(test_set3$price_4_nights, exp(test_set3$predictions))
+
+rmse_price
+
+# find rmse of log_p4n
+log_rmse <- rmse(test_set3$log_p4n, test_set3$predictions)
+
+log_rmse
+
+
+# prediction results
+prediction_summary <- test_set3 %>% 
+  select(predictions) %>% 
+  summarise(mean = mean(exp(predictions), na.rm=TRUE),
+            SD = sd(exp(predictions), na.rm=TRUE),
+            sample_size = n(),
+            SE = sd(exp(predictions))/sqrt(n()),
+            t_critical = qt(0.975,n()-1),
+            lower_CI = mean-t_critical*SE,
+            upper_CI = mean+t_critical*SE)
+
+price_summary <- test_set3 %>% 
+  select(price_4_nights) %>% 
+  summarise(mean = mean(price_4_nights, na.rm=TRUE),
+            SD = sd(price_4_nights, na.rm=TRUE),
+            sample_size = n(),
+            SE = sd(price_4_nights)/sqrt(n()),
+            t_critical = qt(0.975,n()-1),
+            lower_CI = mean-t_critical*SE,
+            upper_CI = mean+t_critical*SE)
+
+rbind(price_summary, prediction_summary)
+
+
+```
+
+
+# Details
+
+- Who did you collaborate with: Stackoverflow and Google
+- Approximately how much time did you spend on this assignment: 9 hr
+- What, if anything, gave you the most trouble: Outliers in histograms and density plots
+
+
+# Acknowledgements
+
+- The data from this lab is from [insideairbnb.com](insideairbnb.com)
