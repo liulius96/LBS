@@ -44,7 +44,7 @@ library(fmsb) # for the radar chart
 # load data
 data <- read_csv('Speed Dating Data.csv')
 
-# we save the data as separate people worked on the coding side with differen variable names
+# rename
 SpeedDatingData <- data
 
 
